@@ -112,7 +112,7 @@ def xl2sqlite(conn, paths,  encoding=None):
 
 def write_to_csv(cursor, path):
     with open(path, 'w', newline='') as f:
-        f.write('sep=,')
+        f.write('sep=,\n')
         writer = csv.writer(f, dialect='excel')
         writer.writerow([d[0] for d in cursor.description])
         for row in cursor:
