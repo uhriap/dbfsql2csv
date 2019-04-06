@@ -5,7 +5,7 @@ import argparse
 import sqlite3
 import xlrd
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 
 from dbfread import DBF
 import csv
@@ -146,6 +146,7 @@ fmt_map = {
 
 def gui(args):
     master = tk.Tk()
+    master.geometry("600x400")
     file_options = {
         'first_table': {
             'caption': 'Выберите файл первой таблицы',
@@ -165,20 +166,28 @@ def gui(args):
         def func():
             value = filedialog.askopenfilename(title=file_options[opt]['caption'])
             file_options[opt]['value'] = value
+            file_options[opt]['label']['text'] = value
         return func
 
+    row = 0
     for opt in file_options:
         button = tk.Button(master, text=file_options[opt]['caption'], command=ask_file_opt(opt))
-        button.pack()
+        button.grid(row=row, column=0, sticky='w')
+        label = tk.Label(master, text=file_options[opt]['value'])
+        label.grid(row=row, column=1, sticky='w')
+        file_options[opt]['label'] = label
+        row += 1
 
     encoding = tk.StringVar()
     encoding.set(args.encoding)
     entry = tk.Entry(textvariable=encoding, text='Выберите кодировку')
     entry.insert(tk.END, 'cp866')
-    entry.pack()
+    entry.grid(row=row, column=1, sticky='w')
+    tk.Label(master, text='Введите кодировку файлов таблиц').grid(row=row, column=0, sticky='w')
+    row += 1
 
     def execute():
-        do_processing(
+        output = do_processing(
             sqlite=':memory:',
             tables=[file_options['first_table']['value'], file_options['second_table']['value']],
             query_file=file_options['query_file']['value'],
@@ -186,14 +195,60 @@ def gui(args):
             output=args.output,
             default_format=args.file_format,
         )
+        messagebox.showinfo(
+            title='Завершено',
+            message='Все получилось! Результат в файле "{}"'.format(os.path.realpath(output))
+        )
 
     execute_button = tk.Button(master, text='Выполнить', command=execute)
-    execute_button.pack()
+    execute_button.grid(row=row, column=0, sticky='w')
+    row += 1
 
     exit_button = tk.Button(master, text='Выйти', command=master.quit)
-    exit_button.pack()
+    exit_button.grid(row=row, column=0, sticky='w')
+    row += 1
+
+    txt_frm = tk.Frame(master, width=800, height=300)
+    txt_frm.grid(row=row, column=0, columnspan=2)
+    row += 1
+    append_gui_logger(txt_frm, args.log_level)
+
+    master.columnconfigure(0, weight=1)
+    master.columnconfigure(1, weight=4)
 
     tk.mainloop()
+
+
+class LoggingToGUI(logging.Handler):
+    """ Used to redirect logging output to the widget passed in parameters """
+    def __init__(self, level, console):
+        super(LoggingToGUI, self).__init__(level)
+        self.console = console
+        self.sep = '\n'
+
+    def emit(self, message):
+        msg = self.format(message) + self.sep
+        self.console.insert(tk.END, msg)
+        self.console.see(tk.END)
+
+
+def append_gui_logger(frame, log_level):
+    # txt_frm.pack(fill="both", expand=True)
+    frame.grid_propagate(False)
+    frame.grid_rowconfigure(0, weight=1)
+    frame.grid_columnconfigure(0, weight=1)
+
+    log_box = tk.Text(frame, borderwidth=3, relief="sunken")
+    log_box.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+    log_box.config(font=("consolas", 12), undo=True, wrap='word')
+    scrollbar = tk.Scrollbar(frame, command=log_box.yview)
+    scrollbar.grid(row=0, column=1, sticky='nsew')
+    log_box['yscrollcommand'] = scrollbar.set
+
+    lh = LoggingToGUI(log_level, log_box)
+    lh.setFormatter(logging.Formatter(fmt='%(asctime)-15s [%(levelname)s] %(message)s'))
+    log.addHandler(lh)
+    log.info('Тут будут писаться сообщения о происходящем')
 
 
 def cli(args):
@@ -207,9 +262,17 @@ def cli(args):
     )
 
 
+def setup_logging(log_level):
+    lh = logging.StreamHandler()
+    lh.setFormatter(logging.Formatter(fmt='%(asctime)-15s [%(levelname)s] %(message)s'))
+    lh.setLevel(log_level)
+    log.setLevel(log_level)
+    log.addHandler(lh)
+
+
 def main():
     args = get_args()
-    logging.basicConfig(level=args.log_level, format='%(asctime)-15s [%(levelname)s] %(message)s')
+    setup_logging(args.log_level)
     if args.cli:
         cli(args)
     else:
@@ -220,14 +283,14 @@ def do_processing(sqlite, tables, query_file, encoding, output, default_format):
     log.debug('Execute with args: %s %s %s %s %s %s', sqlite, tables, query_file, encoding, output, default_format)
     conn = sqlite3.connect(sqlite)
     table_names = []
-    for t in tables:
+    for table in tables:
         fmt = default_format
-        if t.endswith('.dbf'):
+        if table.endswith('.dbf'):
             fmt = 'dbf'
-        if t.endswith('.xls') or t.endswith('.xlsx'):
+        if table.endswith('.xls') or table.endswith('.xlsx'):
             fmt = 'xls'
         load_func = fmt_map.get(fmt)
-        table_names.extend(load_func(conn, tables, encoding=encoding))
+        table_names.extend(load_func(conn, [table], encoding=encoding))
     log.info('Загруженные таблицы: %s', ', '.join('"{}"'.format(name) for name in table_names))
     sql = get_query(query_file, *table_names)
     cursor = conn.cursor()
@@ -239,6 +302,7 @@ def do_processing(sqlite, tables, query_file, encoding, output, default_format):
     write_to_csv(cursor, output)
     cursor.close()
     conn.close()
+    return output
 
 
 if __name__ == '__main__':
