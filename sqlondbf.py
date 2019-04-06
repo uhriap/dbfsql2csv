@@ -54,7 +54,7 @@ def add_dbf_table(cursor, table):
         cursor.execute(sql, list(rec.values()))
 
 
-def dbf2sqlite(conn, paths, encoding='utf-8'):
+def dbf2sqlite(conn, paths, encoding=None):
     cursor = conn.cursor()
 
     names = []
@@ -63,7 +63,7 @@ def dbf2sqlite(conn, paths, encoding='utf-8'):
             table = DBF(
                 table_file,
                 lowernames=True,
-                encoding='cp1251',
+                encoding=encoding,
                 # char_decode_errors=char_decode_errors,
             )
             add_dbf_table(cursor, table)
@@ -126,9 +126,10 @@ def get_args():
     parser.add_argument('tables', nargs='*')
     parser.add_argument('-q', '--query', default='query.sql')
     parser.add_argument('-o', '--output', default='output.csv')
-    parser.add_argument('--log-level', default='DEBUG')
-    parser.add_argument('--encoding', default='utf-8')
+    parser.add_argument('-l', '--log-level', default='DEBUG')
+    parser.add_argument('-e', '--encoding')
     parser.add_argument('-f', '--format', default='dbf')
+    parser.add_argument('-s', '--sqlite', default=':memory:')
     return parser.parse_args()
 
 
@@ -142,7 +143,7 @@ def main():
     args = get_args()
     logging.basicConfig(level=args.log_level, format='%(asctime)-15s [%(levelname)s] %(message)s')
     tables = args.tables or ['dbase_83.dbf']
-    conn = sqlite3.connect(':memory:')
+    conn = sqlite3.connect(args.sqlite)
 
     table_names = fmt_map.get(args.format)(conn, tables, encoding=args.encoding)
 
