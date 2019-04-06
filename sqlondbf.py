@@ -142,7 +142,7 @@ fmt_map = {
 def main():
     args = get_args()
     logging.basicConfig(level=args.log_level, format='%(asctime)-15s [%(levelname)s] %(message)s')
-    tables = args.tables or ['dbase_83.dbf']
+    tables = args.tables
     conn = sqlite3.connect(args.sqlite)
 
     table_names = fmt_map.get(args.format)(conn, tables, encoding=args.encoding)
