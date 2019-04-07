@@ -132,7 +132,7 @@ def get_args():
     parser.add_argument('-q', '--query', default='query.sql', help='Путь к файлу с sql запросом')
     parser.add_argument('-o', '--output', help='Путь к файлу, куда будет записан результат')
     parser.add_argument('-l', '--log-level', default='INFO')
-    parser.add_argument('-e', '--encoding')
+    parser.add_argument('-e', '--encoding', default='cp866', help='Кодировка исходных таблиц')
     parser.add_argument('-f', '--file-format', default='dbf', help='Формат файла с таблицей', choices=fmt_map.keys())
     parser.add_argument('-s', '--sqlite', default=':memory:')
     return parser.parse_args()
@@ -146,7 +146,7 @@ fmt_map = {
 
 def gui(args):
     master = tk.Tk()
-    master.geometry("600x400")
+    master.geometry("600x500")
     file_options = {
         'first_table': {
             'caption': 'Выберите файл первой таблицы',
@@ -178,27 +178,29 @@ def gui(args):
         file_options[opt]['label'] = label
         row += 1
 
-    encoding = tk.StringVar()
-    encoding.set(args.encoding)
-    entry = tk.Entry(textvariable=encoding, text='Выберите кодировку')
-    entry.insert(tk.END, 'cp866')
-    entry.grid(row=row, column=1, sticky='w')
+    encoding = tk.Entry(master)
+    encoding.insert(tk.END, args.encoding)
+    encoding.grid(row=row, column=1, sticky='w')
     tk.Label(master, text='Введите кодировку файлов таблиц').grid(row=row, column=0, sticky='w')
     row += 1
 
     def execute():
-        output = do_processing(
-            sqlite=':memory:',
-            tables=[file_options['first_table']['value'], file_options['second_table']['value']],
-            query_file=file_options['query_file']['value'],
-            encoding=encoding.get(),
-            output=args.output,
-            default_format=args.file_format,
-        )
-        messagebox.showinfo(
-            title='Завершено',
-            message='Все получилось! Результат в файле "{}"'.format(os.path.realpath(output))
-        )
+        try:
+            output = do_processing(
+                sqlite=':memory:',
+                tables=[file_options['first_table']['value'], file_options['second_table']['value']],
+                query_file=file_options['query_file']['value'],
+                encoding=encoding.get(),
+                output=args.output,
+                default_format=args.file_format,
+            )
+        except Exception as e:
+            log.exception('Неожиданная ошибка: %s', e)
+        else:
+            messagebox.showinfo(
+                title='Завершено',
+                message='Все получилось! Результат в файле "{}"'.format(os.path.realpath(output))
+            )
 
     execute_button = tk.Button(master, text='Выполнить', command=execute)
     execute_button.grid(row=row, column=0, sticky='w')
@@ -263,11 +265,7 @@ def cli(args):
 
 
 def setup_logging(log_level):
-    lh = logging.StreamHandler()
-    lh.setFormatter(logging.Formatter(fmt='%(asctime)-15s [%(levelname)s] %(message)s'))
-    lh.setLevel(log_level)
-    log.setLevel(log_level)
-    log.addHandler(lh)
+    logging.basicConfig(level=log_level, format='%(asctime)-15s [%(levelname)s] %(message)s')
 
 
 def main():
@@ -280,10 +278,13 @@ def main():
 
 
 def do_processing(sqlite, tables, query_file, encoding, output, default_format):
-    log.debug('Execute with args: %s %s %s %s %s %s', sqlite, tables, query_file, encoding, output, default_format)
+    log.debug('Выполняю запрос: sqlite=%s tables=%s query_file=%s encoding=%s output=%s default_format=%s',
+             sqlite, tables, query_file, encoding, output, default_format)
     conn = sqlite3.connect(sqlite)
     table_names = []
     for table in tables:
+        if not table:
+            continue
         fmt = default_format
         if table.endswith('.dbf'):
             fmt = 'dbf'
