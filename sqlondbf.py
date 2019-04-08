@@ -237,25 +237,31 @@ def gui(args):
         row += 1
 
     encoding = tk.Entry(master)
-    encoding.insert(tk.END, args.encoding)
+    encoding.insert(tk.END, args.encoding or '')
     encoding.grid(row=row, column=1, sticky='w')
     tk.Label(master, text='Введите кодировку файлов таблиц').grid(row=row, column=0, sticky='w')
     row += 1
 
     out_fmt = tk.Entry(master)
-    out_fmt.insert(tk.END, args.out_fmt)
+    out_fmt.insert(tk.END, args.out_fmt or '')
     out_fmt.grid(row=row, column=1, sticky='w')
     tk.Label(master, text='Введите формат вывода').grid(row=row, column=0, sticky='w')
     row += 1
 
+    output = tk.Entry(master)
+    output.insert(tk.END, args.output or '')
+    output.grid(row=row, column=1, sticky='w')
+    tk.Label(master, text='Путь к файлу с результатом (не обязательно)').grid(row=row, column=0, sticky='w')
+    row += 1
+
     def execute():
         try:
-            output = do_processing(
+            result_output = do_processing(
                 sqlite=':memory:',
                 tables=[file_options['first_table']['value'], file_options['second_table']['value']],
                 query_file=file_options['query_file']['value'],
                 encoding=encoding.get(),
-                output=args.output,
+                output=output.get(),
                 default_format=args.file_format,
                 out_fmt=out_fmt.get(),
             )
@@ -264,7 +270,7 @@ def gui(args):
         else:
             messagebox.showinfo(
                 title='Завершено',
-                message='Все получилось! Результат в файле "{}"'.format(os.path.realpath(output))
+                message='Все получилось! Результат в файле "{}"'.format(os.path.realpath(result_output))
             )
 
     execute_button = tk.Button(master, text='Выполнить', command=execute)
