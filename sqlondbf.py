@@ -6,6 +6,7 @@ import sqlite3
 import xlrd
 import tkinter as tk
 from tkinter import filedialog, messagebox
+from datetime import date, datetime
 
 from dbfread import DBF
 import csv
@@ -28,11 +29,28 @@ dbf_typemap = {
     '0': 'INTEGER',
 }
 
-
-# TODO: support proper types?
-xl_typemap = {
-
+dbf_python_tipemap = {
+    float: 'F(19,5)',
+    bool: 'L',
+    int: 'N(19,0)',
+    str: 'C(255)',
+    date: 'D',
+    datetime: 'D',
 }
+
+from xlrd.sheet import ctype_text, XL_CELL_DATE
+
+
+def xl_to_sql_type(val):
+    return {
+        'empty': 'TEXT',
+        'text': 'TEXT',
+        'number': 'REAL',
+        'xldate': 'DATE',
+        'bool': 'BOOLEAN',
+        'error': 'TEXT',
+        'blank': 'TEXT'
+    }.get(ctype_text[val])
 
 
 def add_dbf_table(cursor, table):
@@ -47,6 +65,7 @@ def add_dbf_table(cursor, table):
     # Create the table
     defs = ', '.join(['"%s" %s' % (f, field_types[f]) for f in table.field_names])
     sql = 'create table "%s" (%s)' % (table.name, defs)
+    log.debug('def: %s', defs)
     log.info('Создаю таблицу "%s"', table.name)
     cursor.execute(sql)
 
@@ -81,21 +100,28 @@ def dbf2sqlite(conn, paths, encoding=None):
     return names
 
 
-def add_xl_table(cursor, sheet, table_name):
-    header = [cell.value for cell in sheet.row(0)]
+def add_xl_table(cursor, sheet, table_name, date_mode):
+    header = list(sheet.row_values(0))
+    types = [xl_to_sql_type(t) for t in sheet.row_types(1)]
 
-    # TODO: support proper types
-    defs = ', '.join(['"%s" %s' % (f, 'TEXT') for f in header])
+    defs = ', '.join(['"%s" %s' % (field, field_type) for field, field_type in zip(header, types)])
+    log.debug('defs: %s', defs)
     sql = 'create table "%s" (%s)' % (table_name, defs)
     log.info('Создаю таблицу "%s"', table_name)
     cursor.execute('drop table if exists `%s`' % table_name)
+    log.debug('execute: %s', sql)
     cursor.execute(sql)
 
     refs = ', '.join([':' + f for f in header])
     sql = 'insert into "%s" values (%s)' % (table_name, refs)
-
     for row_idx in range(1, sheet.nrows):
-        cursor.execute(sql, list(sheet.row_values(row_idx)))
+        values = []
+        for col_idx in range(0, sheet.ncols):
+            value = sheet.cell_value(row_idx, col_idx)
+            if sheet.cell_type(row_idx, col_idx) == XL_CELL_DATE:
+                value = xlrd.xldate.xldate_as_datetime(value, date_mode).date()
+            values.append(value)
+        cursor.execute(sql, values)
 
 
 def xl2sqlite(conn, paths,  encoding=None):
@@ -105,7 +131,7 @@ def xl2sqlite(conn, paths,  encoding=None):
         rb = xlrd.open_workbook(path, encoding_override=encoding)
         sheet = rb.sheet_by_index(0)   # ignore all sheets except first
         table_name = os.path.basename(path).split('.')[0]
-        add_xl_table(cursor, sheet, table_name=table_name)
+        add_xl_table(cursor, sheet, table_name=table_name, date_mode=rb.datemode)
         names.append(table_name)
     return names
 
@@ -135,12 +161,42 @@ def get_args():
     parser.add_argument('-e', '--encoding', default='cp866', help='Кодировка исходных таблиц')
     parser.add_argument('-f', '--file-format', default='dbf', help='Формат файла с таблицей', choices=fmt_map.keys())
     parser.add_argument('-s', '--sqlite', default=':memory:')
+    parser.add_argument('--out-fmt', default='csv', choices=out_fmt_map.keys())
     return parser.parse_args()
+
+
+def write_to_dbf(cursor, path):
+    import dbf
+    headers = [d[0] for d in cursor.description]
+    first_row = next(cursor)
+    # FIXME:
+    if os.path.isfile('dbf.schema'):
+        defs = open('dbf.schema').read().strip()
+    else:
+        defs = '; '.join(
+            '%s %s' % (
+                name, dbf_python_tipemap.get(type(value), 'C'))
+                for name, value in zip(headers, first_row)
+        )
+    log.debug('Dbf defs: %s', defs)
+    log.debug(list(type(value) for value in first_row))
+
+    table = dbf.Db3Table(path, defs, codepage='cp866')
+    table.open(mode=dbf.READ_WRITE)
+    table.append(first_row)
+    for row in cursor:
+        table.append(row)
+    table.close()
 
 
 fmt_map = {
     'dbf': dbf2sqlite,
     'xls': xl2sqlite,
+}
+
+out_fmt_map = {
+    'csv': write_to_csv,
+    'dbf': write_to_dbf,
 }
 
 
@@ -150,11 +206,11 @@ def gui(args):
     file_options = {
         'first_table': {
             'caption': 'Выберите файл первой таблицы',
-            'value': None,
+            'value': args.tables[0] if args.tables and len(args.tables) > 0 else None,
         },
         'second_table': {
             'caption': 'Выберите файл второй таблицы',
-            'value': None,
+            'value': args.tables[1] if args.tables and len(args.tables) > 1 else None,
         },
         'query_file': {
             'caption': 'Выберите файл запроса',
@@ -184,6 +240,12 @@ def gui(args):
     tk.Label(master, text='Введите кодировку файлов таблиц').grid(row=row, column=0, sticky='w')
     row += 1
 
+    out_fmt = tk.Entry(master)
+    out_fmt.insert(tk.END, args.out_fmt)
+    out_fmt.grid(row=row, column=1, sticky='w')
+    tk.Label(master, text='Введите формат вывода').grid(row=row, column=0, sticky='w')
+    row += 1
+
     def execute():
         try:
             output = do_processing(
@@ -193,6 +255,7 @@ def gui(args):
                 encoding=encoding.get(),
                 output=args.output,
                 default_format=args.file_format,
+                out_fmt=out_fmt.get(),
             )
         except Exception as e:
             log.exception('Неожиданная ошибка: %s', e)
@@ -255,12 +318,13 @@ def append_gui_logger(frame, log_level):
 
 def cli(args):
     do_processing(
-        sqlite=args.sqlie,
+        sqlite=args.sqlite,
         tables=args.tables,
         query_file=args.query,
         encoding=args.encoding,
         output=args.output,
-        default_format=args.file_format
+        default_format=args.file_format,
+        out_fmt=args.out_fmt
     )
 
 
@@ -277,10 +341,10 @@ def main():
         gui(args)
 
 
-def do_processing(sqlite, tables, query_file, encoding, output, default_format):
+def do_processing(sqlite, tables, query_file, encoding, output, out_fmt, default_format):
     log.debug('Выполняю запрос: sqlite=%s tables=%s query_file=%s encoding=%s output=%s default_format=%s',
              sqlite, tables, query_file, encoding, output, default_format)
-    conn = sqlite3.connect(sqlite)
+    conn = sqlite3.connect(sqlite, detect_types=sqlite3.PARSE_DECLTYPES)
     table_names = []
     for table in tables:
         if not table:
@@ -298,9 +362,9 @@ def do_processing(sqlite, tables, query_file, encoding, output, default_format):
     log.debug('Выполняем запрос:\n%s', sql)
     cursor.execute(sql)
 
-    output = output or '_'.join(os.path.basename(t) for t in tables + [query_file]).replace(' ', '_') + '.csv'
+    output = output or '_'.join(os.path.basename(t) for t in tables + [query_file]).replace(' ', '_') + '.{}'.format(out_fmt)
     log.info('Записываю результат в файл "%s"', output)
-    write_to_csv(cursor, output)
+    out_fmt_map[out_fmt](cursor, output)
     cursor.close()
     conn.close()
     return output
