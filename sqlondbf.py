@@ -1,6 +1,5 @@
 # coding: utf-8
 import os
-import sys
 import argparse
 import sqlite3
 import xlrd
@@ -8,6 +7,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from datetime import date, datetime
 
+import dbf
 from dbfread import DBF
 import csv
 
@@ -161,14 +161,16 @@ def get_args():
     parser.add_argument('-e', '--encoding', default='cp866', help='Кодировка исходных таблиц')
     parser.add_argument('-f', '--file-format', default='dbf', help='Формат файла с таблицей', choices=fmt_map.keys())
     parser.add_argument('-s', '--sqlite', default=':memory:')
-    parser.add_argument('--out-fmt', default='csv', choices=out_fmt_map.keys())
+    parser.add_argument('--out-fmt', default='dbf', choices=out_fmt_map.keys())
     return parser.parse_args()
 
 
 def write_to_dbf(cursor, path):
-    import dbf
     headers = [d[0] for d in cursor.description]
-    first_row = next(cursor)
+    try:
+        first_row = next(cursor)
+    except StopIteration:
+        raise ValueError('Что-то пошло не так: в результате 0 строк!')
     # FIXME:
     if os.path.isfile('dbf.schema'):
         defs = open('dbf.schema').read().strip()
@@ -181,7 +183,7 @@ def write_to_dbf(cursor, path):
     log.debug('Dbf defs: %s', defs)
     log.debug(list(type(value) for value in first_row))
 
-    table = dbf.Db3Table(path, defs, codepage='cp866')
+    table = dbf.Table(path, defs, codepage='cp866')  # FIXME: encoding hardcoded
     table.open(mode=dbf.READ_WRITE)
     table.append(first_row)
     for row in cursor:
